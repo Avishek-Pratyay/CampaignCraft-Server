@@ -7,7 +7,9 @@ const express_1 = require("express");
 const multer_1 = __importDefault(require("multer"));
 const stream_1 = require("stream");
 const csv_parser_1 = __importDefault(require("csv-parser"));
+const mongoose_1 = __importDefault(require("mongoose"));
 const generative_ai_1 = require("@google/generative-ai");
+const memoryDb_1 = require("../config/memoryDb");
 const auth_1 = require("../middleware/auth");
 const BrandProfile_1 = __importDefault(require("../models/BrandProfile"));
 const Campaign_1 = __importDefault(require("../models/Campaign"));
@@ -42,7 +44,13 @@ router.post('/generate-copy', auth_1.authMiddleware, async (req, res) => {
     let goals = "increase awareness";
     try {
         if (brandProfileId) {
-            const profile = await BrandProfile_1.default.findById(brandProfileId);
+            let profile = null;
+            if ((0, memoryDb_1.isDbConnected)() && mongoose_1.default.Types.ObjectId.isValid(brandProfileId)) {
+                profile = await BrandProfile_1.default.findById(brandProfileId);
+            }
+            else {
+                profile = memoryDb_1.memoryBrands.find(b => b._id === brandProfileId);
+            }
             if (profile) {
                 brandContext = `Brand Name: ${profile.name}\nIndustry: ${profile.industry}\nTarget Audience: ${profile.targetAudience}\nBrand Goals: ${profile.goals}`;
                 voiceTone = profile.voiceTone;
@@ -74,7 +82,6 @@ Please format the response nicely with a Headline, Body Copy, and call-to-action
                 console.error('Gemini call failed, using high-quality mock copy:', err.message);
             }
         }
-        // High quality mock copywriting generator fallback
         const mockCopy = generateMockMarketingCopy(template, voiceTone, industry, audience, goals, length);
         return res.status(200).json({ text: mockCopy });
     }
@@ -83,7 +90,7 @@ Please format the response nicely with a Headline, Body Copy, and call-to-action
         return res.status(500).json({ message: 'Server error' });
     }
 });
-// 2. AI Data Analyzer (supports CSV and JSON files)
+// 2. AI Data Analyzer
 router.post('/analyze-data', auth_1.authMiddleware, upload.single('file'), async (req, res) => {
     try {
         if (!req.file) {
@@ -103,7 +110,6 @@ router.post('/analyze-data', auth_1.authMiddleware, upload.single('file'), async
         if (rawData.length === 0) {
             return res.status(400).json({ message: 'File is empty.' });
         }
-        // Perform analysis aggregations
         let totalSpend = 0;
         let totalImpressions = 0;
         let totalClicks = 0;
@@ -190,7 +196,19 @@ router.post('/recommendations', auth_1.authMiddleware, async (req, res) => {
         return res.status(400).json({ message: 'Campaign ID is required' });
     }
     try {
-        const campaign = await Campaign_1.default.findById(campaignId).populate('brandProfile');
+        let campaign = null;
+        if ((0, memoryDb_1.isDbConnected)() && mongoose_1.default.Types.ObjectId.isValid(campaignId)) {
+            campaign = await Campaign_1.default.findById(campaignId).populate('brandProfile');
+        }
+        else {
+            campaign = memoryDb_1.memoryCampaigns.find(c => c._id === campaignId);
+            if (campaign && campaign.brandProfile === 'mock_brand_id_1') {
+                campaign = {
+                    ...campaign,
+                    brandProfile: memoryDb_1.memoryBrands.find(b => b._id === 'mock_brand_id_1')
+                };
+            }
+        }
         if (!campaign) {
             return res.status(404).json({ message: 'Campaign not found' });
         }
@@ -223,7 +241,6 @@ Response:`;
                 const result = await model.generateContent(prompt);
                 const response = await result.response;
                 const text = response.text().trim();
-                // Extract JSON block if response contains markdown code fences
                 const jsonMatch = text.match(/\[[\s\S]*\]/);
                 if (jsonMatch) {
                     const parsed = JSON.parse(jsonMatch[0]);
@@ -269,7 +286,6 @@ Response:`;
 });
 // Helper Mock Copywriter
 function generateMockMarketingCopy(template, tone, industry, audience, goals, length) {
-    const brandSubject = `ideal solutions in the ${industry} sector`;
     if (template === 'Social Media Post') {
         return `🚀 Ready to scale your brand? 🚀
 
@@ -301,7 +317,6 @@ Ready to get started? We've prepared a comprehensive brand analysis tool just fo
 Best regards,
 The CampaignCraft Team`;
     }
-    // Fallback for Blog Article or Ad Variants
     return `### Headline: The Future of ${industry} in the Age of Agentic AI
 
 In today's digital landscape, targeting ${audience} requires more than simple static templates. Brands must adapt their voice to be both ${tone} and outcome-oriented.
